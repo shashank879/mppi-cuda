@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mppi-cuda"
+version = "0.0.1"
+description = "Fused CUDA MPPI kernels for real-time robot manipulation."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Your Name" }]
+keywords = ["robotics", "mpc", "mppi", "cuda", "manipulation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.1",
+    "numpy",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib"]
+test = ["pytest"]
+dev = ["pytest", "matplotlib", "black", "ruff"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mppi_cuda*"]

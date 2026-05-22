@@ -88,6 +88,8 @@ class MujocoFrankaEnv(RobotEnv):
         model_path: Optional[str | Path] = None,
         control_dt: float = 0.02,
         render_size: tuple[int, int] = (480, 640),
+        target_marker: Optional[np.ndarray] = None,
+        camera: Optional[dict] = None,
     ):
         # Imported here so the package is importable without MuJoCo installed
         # (e.g. for tests of the pure-Python controller).
@@ -96,7 +98,34 @@ class MujocoFrankaEnv(RobotEnv):
         self._mujoco = mujoco
 
         path = Path(model_path) if model_path else _default_franka_xml()
-        self.model = mujoco.MjModel.from_xml_path(str(path))
+
+        # Optionally inject a non-colliding red sphere at `target_marker` so the
+        # rendered scene shows where the controller is reaching for.
+        if target_marker is not None:
+            import tempfile
+            tx, ty, tz = (float(x) for x in target_marker)
+            with open(path) as f:
+                xml_text = f.read()
+            marker = (
+                f'<body name="target_marker" pos="{tx} {ty} {tz}" mocap="true">'
+                f'<geom type="sphere" size="0.025" rgba="1 0 0 0.85" '
+                f'contype="0" conaffinity="0" group="0"/>'
+                f'</body>'
+            )
+            xml_text = xml_text.replace("</worldbody>", marker + "\n  </worldbody>")
+            # Write next to original so the relative meshdir still resolves.
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".xml", dir=path.parent, delete=False
+            ) as f:
+                f.write(xml_text)
+                tmp_path = f.name
+            try:
+                self.model = mujoco.MjModel.from_xml_path(tmp_path)
+            finally:
+                os.unlink(tmp_path)
+        else:
+            self.model = mujoco.MjModel.from_xml_path(str(path))
+
         self.data = mujoco.MjData(self.model)
 
         self.control_dt = control_dt
@@ -117,6 +146,13 @@ class MujocoFrankaEnv(RobotEnv):
 
         self._renderer = None
         self._render_size = render_size
+        self._camera_cfg = camera or {
+            "distance": 1.6,
+            "azimuth": 130.0,
+            "elevation": -25.0,
+            "lookat": [0.35, 0.15, 0.45],
+        }
+        self._camera = None
 
         # Sensible default home pose.
         from .kinematics import FRANKA_HOME_Q
@@ -161,7 +197,13 @@ class MujocoFrankaEnv(RobotEnv):
                 height=self._render_size[0],
                 width=self._render_size[1],
             )
-        self._renderer.update_scene(self.data)
+            self._camera = self._mujoco.MjvCamera()
+            self._mujoco.mjv_defaultCamera(self._camera)
+            self._camera.distance = self._camera_cfg["distance"]
+            self._camera.azimuth = self._camera_cfg["azimuth"]
+            self._camera.elevation = self._camera_cfg["elevation"]
+            self._camera.lookat[:] = self._camera_cfg["lookat"]
+        self._renderer.update_scene(self.data, camera=self._camera)
         return self._renderer.render()
 
     def close(self) -> None:

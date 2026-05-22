@@ -193,6 +193,6 @@ if __name__ == "__main__":
 
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--savepath", default=None)
+    p.add_argument("--savepath", default="docs")
     args = p.parse_args()
     run(device=args.device, savepath=args.savepath)

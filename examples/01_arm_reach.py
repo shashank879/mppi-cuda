@@ -6,7 +6,7 @@ introduces MuJoCo as the plant and keeps the double-integrator as the
 controller's internal model.
 """
 
-import time
+import os, time
 import torch
 
 from mppi_cuda import (
@@ -20,7 +20,7 @@ from mppi_cuda import (
 )
 
 
-def run_demo(device: str = "cpu", make_plot: bool = True):
+def run_demo(device: str = "cpu", savepath=None):
     dtype = torch.float32
 
     # --- Plant (true dynamics) ---
@@ -92,7 +92,7 @@ def run_demo(device: str = "cpu", make_plot: bool = True):
     print(f"Final  EE position:  {ee_final.cpu().numpy()}")
     print(f"Final  position err: {err*1000:.2f} mm")
 
-    if make_plot:
+    if savepath:
         try:
             import matplotlib
             matplotlib.use("Agg")
@@ -130,7 +130,8 @@ def run_demo(device: str = "cpu", make_plot: bool = True):
             ax3.grid(True, alpha=0.3)
 
             plt.tight_layout()
-            out = "reach_demo.png"
+            out = os.path.join(savepath, "reach_demo.png")
+            os.makedirs(savepath, exist_ok=True)
             plt.savefig(out, dpi=120)
             print(f"Saved plot: {out}")
         except ImportError:
@@ -143,6 +144,6 @@ if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--no-plot", action="store_true")
+    p.add_argument("--savepath", default=None)
     args = p.parse_args()
-    run_demo(device=args.device, make_plot=not args.no_plot)
+    run_demo(device=args.device, savepath=args.savepath)

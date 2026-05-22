@@ -17,6 +17,7 @@ from .kinematics import (
     FRANKA_FLANGE_D,
     FRANKA_HOME_Q,
 )
+from .env import RobotEnv, MujocoFrankaEnv
 
 __version__ = "0.0.1"
 __all__ = [
@@ -24,6 +25,8 @@ __all__ = [
     "DoubleIntegratorArm",
     "ReachingCost",
     "forward_kinematics",
+    "RobotEnv",
+    "MujocoFrankaEnv",
     "FRANKA_DH",
     "FRANKA_FLANGE_D",
     "FRANKA_HOME_Q",

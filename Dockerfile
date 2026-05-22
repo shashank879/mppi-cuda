@@ -49,6 +49,8 @@ RUN pip install \
         pybind11 \
         mujoco \
         tqdm \
+        imageio \
+        imageio-ffmpeg \
         ipython
 
 # Robot model zoo (Franka Panda, Unitree H1/G1, etc. — used by Day-2+ demos).

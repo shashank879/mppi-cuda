@@ -28,6 +28,14 @@ class DoubleIntegratorArm:
 
     State:   x = [q (7,), qdot (7,)]   (14,)
     Control: u = q_ddot (7,)           (7,)
+
+    Optional `gravity_bias` is a (7,) tensor of joint accelerations that
+    are added to the commanded `u` inside step(). Used to inject gravity
+    compensation: the controller plans against a model where the arm
+    "knows" gravity is pulling it down, so it commands the right counter
+    automatically. The bias is updated externally (once per MPPI tick)
+    rather than computed analytically inside dynamics — see
+    `mppi_cuda.gravity.compute_gravity_acceleration`.
     """
 
     state_dim = 14
@@ -41,6 +49,7 @@ class DoubleIntegratorArm:
         qdot_max=FRANKA_QDOT_MAX,
         device: str = "cpu",
         dtype: torch.dtype = torch.float32,
+        gravity_bias=None,
     ):
         self.dt = dt
         self.device = device
@@ -48,6 +57,10 @@ class DoubleIntegratorArm:
         self.q_min = torch.as_tensor(q_min, device=device, dtype=dtype)
         self.q_max = torch.as_tensor(q_max, device=device, dtype=dtype)
         self.qdot_max = torch.as_tensor(qdot_max, device=device, dtype=dtype)
+        self.gravity_bias = (
+            torch.as_tensor(gravity_bias, device=device, dtype=dtype)
+            if gravity_bias is not None else None
+        )
 
     def __call__(self, x: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         return self.step(x, u)
@@ -57,8 +70,11 @@ class DoubleIntegratorArm:
         q = x[..., :7]
         qdot = x[..., 7:]
 
+        # Effective acceleration = controller's command + gravity-induced bias.
+        u_eff = u if self.gravity_bias is None else u + self.gravity_bias
+
         # Semi-implicit Euler: integrate velocity first, then position.
-        qdot_new = qdot + self.dt * u
+        qdot_new = qdot + self.dt * u_eff
         qdot_new = torch.clamp(qdot_new, -self.qdot_max, self.qdot_max)
         q_new = q + self.dt * qdot_new
 

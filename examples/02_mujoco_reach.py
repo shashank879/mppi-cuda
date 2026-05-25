@@ -16,6 +16,7 @@ import torch
 
 from mppi_cuda import (
     MPPIController,
+    CudaMPPIController,
     DoubleIntegratorArm,
     ReachingCost,
     MujocoFrankaEnv,
@@ -76,21 +77,39 @@ def run(device: str = "cpu", savepath=None):
     #   v3: added lookahead=5 in bridge; final 146 mm but oscillatory at bottom.
     #   v4 (this):  lookahead=5 + smaller sigma=2.5, smaller u_max=20,
     #               heavier reach-cost weighting (in `cost` above) to overpower noise.
-    controller = MPPIController(
-        dynamics=predictive.step,
-        running_cost=cost.running_cost,
-        terminal_cost=cost.terminal_cost,
-        action_dim=7,
-        horizon=40,
-        num_samples=1024,
-        sigma=2.5,
-        temperature=1.0,
-        u_min=-20.0,
-        u_max=20.0,
-        device=device,
-        dtype=dtype,
-        seed=0,
-    )
+    if args.controller == "torch":
+        controller = MPPIController(
+            dynamics=predictive.step,
+            running_cost=cost.running_cost,
+            terminal_cost=cost.terminal_cost,
+            action_dim=7,
+            horizon=40,
+            num_samples=1024,
+            sigma=2.5,
+            temperature=1.0,
+            u_min=-20.0,
+            u_max=20.0,
+            device=device,
+            dtype=dtype,
+            seed=0,
+        )
+    elif args.controller == "cuda":
+        controller = CudaMPPIController(
+            dynamics=predictive,
+            cost=cost,
+            action_dim=7,
+            horizon=40,
+            num_samples=1024,
+            sigma=2.5,
+            temperature=1.0,
+            u_min=-20.0,
+            u_max=20.0,
+            device=device,
+            dtype=dtype,
+            seed=0,
+        )
+    else:
+        raise NotImplementedError(args.controller)
 
     # --- Reset ---
     s = env.reset()  # defaults to home
@@ -179,7 +198,7 @@ def run(device: str = "cpu", savepath=None):
         ax3.grid(True, alpha=0.3)
 
         plt.tight_layout()
-        out = os.path.join(savepath, "mujoco_reach_demo.png")
+        out = os.path.join(savepath, f"{args.controller}_mujoco_reach_demo.png")
         os.makedirs(savepath, exist_ok=True)
         plt.savefig(out, dpi=120)
         print(f"Saved plot: {out}")
@@ -193,6 +212,7 @@ if __name__ == "__main__":
 
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--controller", default="cuda", choices=["torch", "cuda"])
     p.add_argument("--savepath", default="docs")
     args = p.parse_args()
     run(device=args.device, savepath=args.savepath)

@@ -200,8 +200,7 @@ def run(device: str = "cpu", with_obstacles: bool = True, savepath=None):
 
         # Build a legend manually — Line3DCollection doesn't make one for us.
         handles = [Line2D([0], [0], color="tab:blue", lw=2, label="EE trajectory")]
-        if inside_any.any():
-            handles.append(Line2D([0], [0], color="red", lw=2, label="inside obstacle"))
+        handles.append(Line2D([0], [0], color="red", lw=2, label="inside obstacle"))
         handles += [
             Line2D([0], [0], marker="o", color="w", markerfacecolor="green", markersize=8, label="start"),
             Line2D([0], [0], marker="o", color="w", markerfacecolor="red",   markersize=8, label="target"),

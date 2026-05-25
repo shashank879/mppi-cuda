@@ -73,4 +73,4 @@ USER ${USERNAME}
 WORKDIR /home/${USERNAME}/mppi-cuda
 
 # CMD ["/bin/bash"]
-CMD pip install -e ".[dev]" --no-deps --force-reinstall && exec /bin/bash
+CMD pip install -e ".[dev]" --no-deps --no-build-isolation --force-reinstall && exec /bin/bash

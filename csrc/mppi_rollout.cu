@@ -91,6 +91,46 @@ __device__ __forceinline__ void forward_kinematics_pos(
     ee_pos[2] = FRANKA_FLANGE_D * T_b[2*4 + 2] + T_b[2*4 + 3];
 }
 
+// Obstacle avoidance cost for the EE: smooth quadratic ramp inside
+// the inflated radius (r + margin), plus optional flat penalty when
+// the EE has actually entered the sphere. Returns the already-weighted
+// contribution to the per-timestep cost.
+//
+// Memory: each obstacle is 4 floats, n_obs typically 0-8. They live in
+// global memory, read by every thread of every block — broadcast in L1
+// after the first access. No explicit shared-memory caching needed
+// at the demo's n_obs scale.
+__device__ __forceinline__ float obstacle_cost(
+    const float ee[3],
+    const float* __restrict__ obstacles,
+    int   n_obs,
+    float w_obs,
+    float obs_margin,
+    float w_obs_flat)
+{
+    float acc = 0.0f;
+    for (int o = 0; o < n_obs; o++) {
+        const float ox   = obstacles[o*4 + 0];
+        const float oy   = obstacles[o*4 + 1];
+        const float oz   = obstacles[o*4 + 2];
+        const float orad = obstacles[o*4 + 3];
+
+        const float dx = ee[0] - ox;
+        const float dy = ee[1] - oy;
+        const float dz = ee[2] - oz;
+        const float d  = sqrtf(dx*dx + dy*dy + dz*dz);
+
+        const float violation = fmaxf(orad + obs_margin - d, 0.0f);
+        acc += w_obs * (violation * violation);
+
+        // Flat bump for actual intersection. Skipped when disabled.
+        if (w_obs_flat > 0.0f) {
+            acc += (d < orad) ? w_obs_flat : 0.0f;
+        }
+    }
+    return acc;
+}
+
 // Per-thread: roll out one trajectory for H steps, accumulate cost, write out.
 __global__ void mppi_rollout_kernel(
     const float* __restrict__ x0,         // (14,)
@@ -100,11 +140,13 @@ __global__ void mppi_rollout_kernel(
     const float* __restrict__ q_min,      // (7,)
     const float* __restrict__ q_max,      // (7,)
     const float* __restrict__ qdot_max,   // (7,)
+    const float* __restrict__ obstacles,  // (n_obs * 4,) flat (x,y,z,r); may be null when n_obs=0
     float* __restrict__ costs_out,        // (K,)
-    int K, int H,
+    int K, int H, int n_obs,
     float u_min, float u_max,
     float dt,
     float w_pos, float w_u, float w_qdot, float w_lim,
+    float w_obs, float obs_margin, float w_obs_flat,
     float terminal_scale)
 {
     const int k = blockIdx.x * blockDim.x + threadIdx.x;
@@ -175,7 +217,8 @@ __global__ void mppi_rollout_kernel(
         cost += w_pos * pos_err_sq
               + w_u    * u_sq
               + w_qdot * qdot_sq
-              + w_lim  * lim_sq;
+              + w_lim  * lim_sq
+              + obstacle_cost(ee, obstacles, n_obs, w_obs, obs_margin, w_obs_flat);
 
         // Dynamics: semi-implicit Euler with velocity clamp.
         #pragma unroll
@@ -187,13 +230,16 @@ __global__ void mppi_rollout_kernel(
         }
     }
 
-    // Terminal cost: weighted position error at post-final state.
+    // Terminal cost: weighted position error at post-final state,
+    // plus obstacle penalty so the planner doesn't "tunnel" to the goal
+    // in the last step.
     float ee[3];
     forward_kinematics_pos(q, ee);
     const float dx = ee[0] - tgt[0];
     const float dy = ee[1] - tgt[1];
     const float dz = ee[2] - tgt[2];
     cost += terminal_scale * w_pos * (dx*dx + dy*dy + dz*dz);
+    cost += obstacle_cost(ee, obstacles, n_obs, w_obs, obs_margin, w_obs_flat);
 
     costs_out[k] = cost;
 }
@@ -208,9 +254,11 @@ torch::Tensor mppi_rollout(
     torch::Tensor q_min,
     torch::Tensor q_max,
     torch::Tensor qdot_max,
+    torch::Tensor obstacles,        // (n_obs, 4) flat (x, y, z, r); shape (0, 4) when none
     double u_min, double u_max,
     double dt,
     double w_pos, double w_u, double w_qdot, double w_lim,
+    double w_obs, double obs_margin, double w_obs_flat,
     double terminal_scale)
 {
     TORCH_CHECK(x0.is_cuda(),         "x0 must be CUDA");
@@ -219,13 +267,16 @@ torch::Tensor mppi_rollout(
     TORCH_CHECK(target_pos.is_cuda(), "target_pos must be CUDA");
     TORCH_CHECK(q_min.is_cuda() && q_max.is_cuda() && qdot_max.is_cuda(),
                 "joint limits must be CUDA");
+    TORCH_CHECK(obstacles.is_cuda(),  "obstacles must be CUDA");
 
     TORCH_CHECK(x0.scalar_type() == torch::kFloat32, "x0 must be fp32");
     TORCH_CHECK(noise.scalar_type() == torch::kFloat32, "noise must be fp32");
+    TORCH_CHECK(obstacles.scalar_type() == torch::kFloat32, "obstacles must be fp32");
 
     TORCH_CHECK(x0.is_contiguous(),        "x0 must be contiguous");
     TORCH_CHECK(U_nominal.is_contiguous(), "U_nominal must be contiguous");
     TORCH_CHECK(noise.is_contiguous(),     "noise must be contiguous");
+    TORCH_CHECK(obstacles.is_contiguous(), "obstacles must be contiguous");
 
     TORCH_CHECK(x0.dim() == 1 && x0.size(0) == 14,
                 "x0 must be shape (14,), got ", x0.sizes());
@@ -238,9 +289,12 @@ torch::Tensor mppi_rollout(
     TORCH_CHECK(target_pos.numel() == 3, "target_pos must have 3 elements");
     TORCH_CHECK(q_min.numel() == 7 && q_max.numel() == 7 && qdot_max.numel() == 7,
                 "joint limits must each have 7 elements");
+    TORCH_CHECK(obstacles.dim() == 2 && obstacles.size(1) == 4,
+                "obstacles must be shape (N, 4), got ", obstacles.sizes());
 
     const int K = noise.size(0);
     const int H = noise.size(1);
+    const int n_obs = obstacles.size(0);
 
     const c10::cuda::OptionalCUDAGuard guard(x0.device());
     auto stream = at::cuda::getCurrentCUDAStream();
@@ -258,17 +312,20 @@ torch::Tensor mppi_rollout(
         q_min.data_ptr<float>(),
         q_max.data_ptr<float>(),
         qdot_max.data_ptr<float>(),
+        obstacles.data_ptr<float>(),
         costs.data_ptr<float>(),
-        K, H,
+        K, H, n_obs,
         static_cast<float>(u_min), static_cast<float>(u_max),
         static_cast<float>(dt),
         static_cast<float>(w_pos),
         static_cast<float>(w_u),
         static_cast<float>(w_qdot),
         static_cast<float>(w_lim),
+        static_cast<float>(w_obs),
+        static_cast<float>(obs_margin),
+        static_cast<float>(w_obs_flat),
         static_cast<float>(terminal_scale)
     );
-    // Optional: check for launch errors in debug builds.
     AT_CUDA_CHECK(cudaGetLastError());
 
     return costs;

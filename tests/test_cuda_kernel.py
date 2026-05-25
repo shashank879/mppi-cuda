@@ -34,13 +34,22 @@ from mppi_cuda import (
 )
 
 
-def _setup(K=1024, H=40, device="cuda", seed=0):
+def _setup(K=1024, H=40, device="cuda", seed=0, with_obstacles=False):
     """Build the dynamics, cost, and a deterministic noise tensor used by both backends."""
     dtype = torch.float32
     dyn = DoubleIntegratorArm(dt=0.02, device=device, dtype=dtype)
+
+    obstacles = None
+    if with_obstacles:
+        obstacles = [
+            (0.40, 0.05, 0.55, 0.06),
+            (0.40, 0.25, 0.55, 0.06),
+        ]
+
     cost = ReachingCost(
         target_pos=[0.5, 0.3, 0.5],
         w_pos=500.0, w_u=0.005, w_qdot=0.05, terminal_scale=20.0,
+        obstacles=obstacles, w_obs=1000.0, obs_margin=0.05,
         q_min=FRANKA_Q_MIN, q_max=FRANKA_Q_MAX,
         device=device, dtype=dtype,
     )
@@ -72,28 +81,30 @@ def _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H):
     return costs
 
 
+def _call_kernel(x, U_nominal, noise, cost, dyn):
+    return cuda_rollout(
+        x, U_nominal, noise,
+        cost.target_pos, dyn.q_min, dyn.q_max, dyn.qdot_max,
+        cost.obstacles,
+        -20.0, 20.0,
+        dyn.dt,
+        cost.w_pos, cost.w_u, cost.w_qdot, cost.w_lim,
+        cost.w_obs, cost.obs_margin, cost.w_obs_flat,
+        cost.terminal_scale,
+    )
+
+
 def test_kernel_matches_pytorch_costs_K1024_H40():
     K, H = 1024, 40
     dyn, cost, U_nominal, U_perturbed, noise, x = _setup(K=K, H=H)
 
     ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
-
-    out = cuda_rollout(
-        x, U_nominal, noise,
-        cost.target_pos, dyn.q_min, dyn.q_max, dyn.qdot_max,
-        -20.0, 20.0,
-        dyn.dt,
-        cost.w_pos, cost.w_u, cost.w_qdot, cost.w_lim,
-        cost.terminal_scale,
-    )
+    out = _call_kernel(x, U_nominal, noise, cost, dyn)
     torch.cuda.synchronize()
 
     abs_err = (out - ref).abs()
     rel_err = abs_err / (ref.abs() + 1e-6)
 
-    # The PyTorch baseline does the FK in fp32 too, with the same DH params.
-    # Differences come from cosf/sinf vs cos/sin order-of-operations.
-    # Tolerance is generous; agreement is normally far tighter.
     max_rel = rel_err.max().item()
     max_abs = abs_err.max().item()
     print(f"\n  max abs err: {max_abs:.3e}")
@@ -119,18 +130,39 @@ def test_kernel_matches_pytorch_costs_with_nonzero_U_nominal():
     noise = (U_perturbed - U_nominal.unsqueeze(0)).contiguous()
 
     ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
-    out = cuda_rollout(
-        x, U_nominal, noise,
-        cost.target_pos, dyn.q_min, dyn.q_max, dyn.qdot_max,
-        -20.0, 20.0,
-        dyn.dt,
-        cost.w_pos, cost.w_u, cost.w_qdot, cost.w_lim,
-        cost.terminal_scale,
-    )
+    out = _call_kernel(x, U_nominal, noise, cost, dyn)
     torch.cuda.synchronize()
 
     max_rel = ((out - ref).abs() / (ref.abs() + 1e-6)).max().item()
     assert max_rel < 1e-3, f"costs differ: max_rel={max_rel:.3e}"
+
+
+def test_kernel_matches_pytorch_costs_with_obstacles():
+    """Same fixed-seed comparison, but with two obstacles configured.
+
+    Exercises the obstacle_cost device function in both the running- and
+    terminal-cost code paths. Some rollouts will sample trajectories that
+    penetrate the spheres, producing large costs — the kernel must agree
+    with the PyTorch baseline across the full cost range.
+    """
+    K, H = 1024, 40
+    dyn, cost, U_nominal, U_perturbed, noise, x = _setup(K=K, H=H, with_obstacles=True)
+
+    ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
+    out = _call_kernel(x, U_nominal, noise, cost, dyn)
+    torch.cuda.synchronize()
+
+    abs_err = (out - ref).abs()
+    rel_err = abs_err / (ref.abs() + 1e-6)
+    max_rel = rel_err.max().item()
+    max_abs = abs_err.max().item()
+    print(f"\n  (with obstacles)  max abs err: {max_abs:.3e}, max rel: {max_rel:.3e}")
+    print(f"  ref range: [{ref.min():.2f}, {ref.max():.2f}]")
+
+    assert max_rel < 1e-3, (
+        f"obstacle-case costs differ too much: "
+        f"max_rel={max_rel:.3e}, max_abs={max_abs:.3e}"
+    )
 
 
 def test_cuda_controller_step_matches_cpu_controller_step():

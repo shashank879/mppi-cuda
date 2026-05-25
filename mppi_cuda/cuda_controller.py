@@ -116,9 +116,11 @@ class CudaMPPIController:
             self.dynamics.q_min,
             self.dynamics.q_max,
             self.dynamics.qdot_max,
+            self.cost.obstacles,                  # (n_obs, 4); (0, 4) if disabled
             self.u_min, self.u_max,
             self.dynamics.dt,
             self.cost.w_pos, self.cost.w_u, self.cost.w_qdot, self.cost.w_lim,
+            self.cost.w_obs, self.cost.obs_margin, self.cost.w_obs_flat,
             self.cost.terminal_scale,
         )
 

@@ -83,15 +83,46 @@ class PyTorchBackend(Backend):
         return (time.perf_counter() - t0) * 1000.0
 
 
-# Hook for the CUDA kernel — registered once we have it.
-# class CudaKernelBackend(Backend):
-#     name = "cuda_kernel"
-#     ...
+class CudaKernelBackend(Backend):
+    """CudaMPPIController — same algorithm, kernel-fused rollout."""
+    def __init__(self):
+        self.name = "cuda_kernel"
+
+    def setup(self, K: int, H: int, *, dtype=torch.float32):
+        from mppi_cuda import CudaMPPIController
+        if CudaMPPIController is None:
+            raise RuntimeError("CUDA kernel extension is not built. "
+                               "Run `pip install -e .` in a CUDA environment.")
+        d, dt = "cuda", dtype
+        self.predictive = DoubleIntegratorArm(dt=0.02, device=d, dtype=dt)
+        self.cost = ReachingCost(
+            target_pos=[0.5, 0.3, 0.5],
+            w_pos=500.0, w_u=0.005, w_qdot=0.05, terminal_scale=20.0,
+            q_min=FRANKA_Q_MIN, q_max=FRANKA_Q_MAX, device=d, dtype=dt,
+        )
+        self.ctrl = CudaMPPIController(
+            dynamics=self.predictive, cost=self.cost,
+            action_dim=7, horizon=H, num_samples=K,
+            sigma=2.5, temperature=1.0,
+            u_min=-20.0, u_max=20.0, device=d, dtype=dt, seed=0,
+        )
+        self.x = torch.cat([
+            torch.tensor(FRANKA_HOME_Q, device=d, dtype=dt),
+            torch.zeros(7, device=d, dtype=dt),
+        ])
+
+    def tick(self) -> float:
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        _ = self.ctrl.step(self.x)
+        torch.cuda.synchronize()
+        return (time.perf_counter() - t0) * 1000.0
 
 
 BACKENDS: dict[str, Callable[[], Backend]] = {
     "cpu_pytorch": lambda: PyTorchBackend("cpu"),
     "cuda_pytorch": lambda: PyTorchBackend("cuda"),
+    "cuda_kernel": lambda: CudaKernelBackend(),
 }
 
 

@@ -89,6 +89,7 @@ class MujocoFrankaEnv(RobotEnv):
         control_dt: float = 0.02,
         render_size: tuple[int, int] = (480, 640),
         target_marker: Optional[np.ndarray] = None,
+        obstacle_markers: Optional[np.ndarray] = None,
         camera: Optional[dict] = None,
     ):
         # Imported here so the package is importable without MuJoCo installed
@@ -99,21 +100,35 @@ class MujocoFrankaEnv(RobotEnv):
 
         path = Path(model_path) if model_path else _default_franka_xml()
 
-        # Optionally inject a non-colliding red sphere at `target_marker` so the
-        # rendered scene shows where the controller is reaching for.
-        if target_marker is not None:
+        # Optionally inject non-colliding visualization geoms. Both the target
+        # (red) and obstacles (yellow) are visual-only — the cost handles
+        # avoidance, MuJoCo's contact solver doesn't.
+        needs_xml_edit = target_marker is not None or obstacle_markers is not None
+        if needs_xml_edit:
             import tempfile
-            tx, ty, tz = (float(x) for x in target_marker)
             with open(path) as f:
                 xml_text = f.read()
-            marker = (
-                f'<body name="target_marker" pos="{tx} {ty} {tz}" mocap="true">'
-                f'<geom type="sphere" size="0.025" rgba="1 0 0 0.85" '
-                f'contype="0" conaffinity="0" group="0"/>'
-                f'</body>'
-            )
-            xml_text = xml_text.replace("</worldbody>", marker + "\n  </worldbody>")
-            # Write next to original so the relative meshdir still resolves.
+            extra = ""
+            if target_marker is not None:
+                tx, ty, tz = (float(v) for v in target_marker)
+                extra += (
+                    f'<body name="target_marker" pos="{tx} {ty} {tz}" mocap="true">'
+                    f'<geom type="sphere" size="0.025" rgba="1 0 0 0.85" '
+                    f'contype="0" conaffinity="0" group="0"/></body>\n  '
+                )
+            if obstacle_markers is not None:
+                obs_arr = np.asarray(obstacle_markers, dtype=float)
+                if obs_arr.ndim != 2 or obs_arr.shape[1] != 4:
+                    raise ValueError(
+                        "obstacle_markers must be shape (N, 4) for (x, y, z, r)"
+                    )
+                for i, (ox, oy, oz, orad) in enumerate(obs_arr):
+                    extra += (
+                        f'<body name="obs_{i}" pos="{ox} {oy} {oz}" mocap="true">'
+                        f'<geom type="sphere" size="{orad}" rgba="0.85 0.75 0.1 0.65" '
+                        f'contype="0" conaffinity="0" group="0"/></body>\n  '
+                    )
+            xml_text = xml_text.replace("</worldbody>", extra + "</worldbody>")
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".xml", dir=path.parent, delete=False
             ) as f:

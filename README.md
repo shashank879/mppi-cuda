@@ -65,10 +65,10 @@ The repo vendors the Franka model from `mujoco_menagerie` under `assets/franka_p
 
 ### Closed-loop reach in MuJoCo
 
-PyTorch double-integrator predictive model, real-physics MuJoCo plant, 50 Hz control. Arm reaches a target 36 cm from the home pose with **39 mm final EE error**.
+PyTorch double-integrator predictive model, real-physics MuJoCo plant, 50 Hz control. Arm reaches a target 36 cm from the home pose with **0.27 mm final EE error**.
 
 <p align="center">
-  <img src="docs/mujoco_reach_demo.png" alt="MuJoCo closed-loop reach" width="900"/>
+  <img src="docs/cuda_mujoco_reach_demo.png" alt="MuJoCo closed-loop reach" width="900"/>
 </p>
 
 ### Obstacle avoidance
@@ -81,8 +81,8 @@ Two yellow spheres form a gate between home and target. The smooth quadratic pen
 
 | Configuration | Final EE error | Min clearance (obstacle 0) | Min clearance (obstacle 1) |
 | --- | ---: | ---: | ---: |
-| No obstacles | 39.07 mm | n/a | n/a |
-| 2-sphere gate | 46.75 mm | +15.5 mm | +31.8 mm |
+| No obstacles | 0.27 mm | n/a | n/a |
+| 2-sphere gate | 0.26 mm | +13.1 mm | +6.2 mm |
 
 The 8 mm penalty for the detour is a tax we pay; both clearances are strictly positive, so the smooth cost (not just the flat penalty) is providing meaningful avoidance pressure rather than penalising only after impact.
 
@@ -104,9 +104,9 @@ MuJoCo Menagerie's Franka XML uses `<general>` actuators configured as PD (kp=45
   <img src="docs/gravity_ablation.png" alt="gravity ablation" width="900"/>
 </p> -->
 
-### The PD-lookahead bridge
+<!-- ### The PD-lookahead bridge
 
-MuJoCo's PD is heavily overdamped (kp/kd ≈ 10). When the bridge commands `q_target = q + dt²·u`, the PD reaches the target in milliseconds and *settles*, and the arm never sustains the velocity the controller is planning for. Looking five ticks ahead (`q_target = q + 5·dt·(qdot + dt·u)`) keeps the actuator in the chasing regime with continuous velocity. The lookahead factor effectively cancels the PD's natural settling time and is the difference between the controller producing 287 mm of final error vs 39 mm.
+MuJoCo's PD is heavily overdamped (kp/kd ≈ 10). When the bridge commands `q_target = q + dt²·u`, the PD reaches the target in milliseconds and *settles*, and the arm never sustains the velocity the controller is planning for. Looking five ticks ahead (`q_target = q + 5·dt·(qdot + dt·u)`) keeps the actuator in the chasing regime with continuous velocity. The lookahead factor effectively cancels the PD's natural settling time and is the difference between the controller producing 287 mm of final error vs 39 mm. -->
 <!-- This is the kind of detail that doesn't show up in MPC textbooks but matters for actual deployment. -->
 
 <!-- ### Why bit-exact correctness testing

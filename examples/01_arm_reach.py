@@ -44,7 +44,7 @@ def run_demo(device: str = "cpu", savepath=None):
         terminal_cost=cost.terminal_cost,
         action_dim=7,
         horizon=24,
-        num_samples=1024,
+        num_samples=4096,
         sigma=2.5,         # acceleration noise std (rad/s^2)
         temperature=1.0,
         u_min=-10.0,       # accel limits (rad/s^2)

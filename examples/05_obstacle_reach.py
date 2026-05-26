@@ -81,8 +81,8 @@ def run(device: str = "cpu", with_obstacles: bool = True, savepath=None):
             running_cost=cost.running_cost,
             terminal_cost=cost.terminal_cost,
             action_dim=7,
-            horizon=40,
-            num_samples=1024,
+            horizon=10,
+            num_samples=4096,
             sigma=2.5,
             temperature=1.0,
             u_min=-20.0,
@@ -96,8 +96,8 @@ def run(device: str = "cpu", with_obstacles: bool = True, savepath=None):
             dynamics=predictive,
             cost=cost,
             action_dim=7,
-            horizon=40,
-            num_samples=1024,
+            horizon=10,
+            num_samples=4096,
             sigma=2.5,
             temperature=1.0,
             u_min=-20.0,
@@ -228,7 +228,7 @@ def run(device: str = "cpu", with_obstacles: bool = True, savepath=None):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    p.add_argument("--controller", default="torch", choices=["torch", "cuda"])
+    p.add_argument("--controller", default="cuda", choices=["torch", "cuda"])
     p.add_argument("--no-obstacles", action="store_true",
                    help="Ablation: run without obstacle cost.")
     p.add_argument("--savepath", default="docs")

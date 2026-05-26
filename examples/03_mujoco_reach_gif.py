@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from mppi_cuda import (
     MPPIController,
+    CudaMPPIController,
     DoubleIntegratorArm,
     ReachingCost,
     MujocoFrankaEnv,
@@ -58,21 +59,40 @@ def main(device="cpu", out_gif: str = "docs/reach.gif", out_mp4: str | None = "d
         device=device,
         dtype=dtype,
     )
-    controller = MPPIController(
-        dynamics=predictive.step,
-        running_cost=cost.running_cost,
-        terminal_cost=cost.terminal_cost,
-        action_dim=7,
-        horizon=40,
-        num_samples=1024,
-        sigma=2.5,
-        temperature=1.0,
-        u_min=-20.0,
-        u_max=20.0,
-        device=device,
-        dtype=dtype,
-        seed=0,
-    )
+
+    if args.controller == "torch":
+        controller = MPPIController(
+            dynamics=predictive.step,
+            running_cost=cost.running_cost,
+            terminal_cost=cost.terminal_cost,
+            action_dim=7,
+            horizon=10,
+            num_samples=4096,
+            sigma=2.5,
+            temperature=1.0,
+            u_min=-20.0,
+            u_max=20.0,
+            device=device,
+            dtype=dtype,
+            seed=0,
+        )
+    elif args.controller == "cuda":
+        controller = CudaMPPIController(
+            dynamics=predictive,
+            cost=cost,
+            action_dim=7,
+            horizon=10,
+            num_samples=4096,
+            sigma=2.5,
+            temperature=1.0,
+            u_min=-20.0,
+            u_max=20.0,
+            device=device,
+            dtype=dtype,
+            seed=0,
+        )
+    else:
+        raise NotImplementedError(args.controller)
 
     s = env.reset()
 
@@ -122,6 +142,7 @@ def main(device="cpu", out_gif: str = "docs/reach.gif", out_mp4: str | None = "d
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--controller", default="cuda", choices=["torch", "cuda"])
     p.add_argument("--gif", default="docs/reach.gif")
     p.add_argument("--mp4", default="docs/reach.mp4")
     args = p.parse_args()

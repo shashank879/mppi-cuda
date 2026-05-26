@@ -197,7 +197,17 @@ class MujocoFrankaEnv(RobotEnv):
             raise ValueError(f"action must have shape ({self.action_dim},), got {action.shape}")
         self.data.ctrl[:7] = action
         for _ in range(self.n_sim_steps):
-            self._mujoco.mj_step(self.model, self.data)
+            # 1. Compute kinematics, inertia, and bias forces for the current state
+            self._mujoco.mj_step1(self.model, self.data)
+
+            # 2. Apply Feedforward Compensation
+            # data.qfrc_bias contains the forces caused by Gravity + Coriolis + Centrifugal.
+            # By applying this to qfrc_applied, the motors instantly support their own weight
+            # and cancel out rotational momentum, acting exactly like an ideal Double Integrator.
+            self.data.qfrc_applied[:7] = self.data.qfrc_bias[:7]
+
+            # 3. Integrate the physics forward
+            self._mujoco.mj_step2(self.model, self.data)
         return self.get_state()
 
     def get_state(self) -> np.ndarray:

@@ -25,6 +25,7 @@ import platform
 import time
 from pathlib import Path
 from typing import Callable
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -132,7 +133,7 @@ def run_one(backend: Backend, K: int, H: int, warmup: int, measure: int) -> dict
     backend.setup(K, H)
     for _ in range(warmup):
         backend.tick()
-    samples = np.array([backend.tick() for _ in range(measure)])
+    samples = np.array([backend.tick() for _ in tqdm(range(measure))])
     backend.teardown()
     return {
         "backend":  backend.name,

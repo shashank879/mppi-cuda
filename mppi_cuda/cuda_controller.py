@@ -102,7 +102,17 @@ class CudaMPPIController:
         U_perturbed = torch.clamp(U_perturbed, self.u_min, self.u_max)
         noise = (U_perturbed - self.U.unsqueeze(0)).contiguous()
 
-        # 3. Fused rollout + cost on GPU.
+        # 3. Build the per-step target buffer (H+1, 3).
+        # If the cost has an explicit trajectory and it's long enough, use it.
+        # Otherwise broadcast the static target_pos. Either way the kernel sees
+        # a uniform (H+1, 3) layout, so its time loop just indexes by t.
+        if (self.cost.target_traj is not None
+                and self.cost.target_traj.shape[0] >= H + 1):
+            target_traj = self.cost.target_traj[: H + 1].contiguous()
+        else:
+            target_traj = self.cost.target_pos.unsqueeze(0).expand(H + 1, 3).contiguous()
+
+        # 4. Fused rollout + cost on GPU.
         # IMPORTANT: the kernel re-applies the same clamp internally, so the
         # noise we pass in is the *raw* (pre-clamp) perturbation. After
         # clamping above, `noise = U_perturbed - U`, so `U + noise` clamps to
@@ -112,7 +122,7 @@ class CudaMPPIController:
             x.contiguous(),
             self.U.contiguous(),
             noise,
-            self.cost.target_pos,
+            target_traj,
             self.dynamics.q_min,
             self.dynamics.q_max,
             self.dynamics.qdot_max,

@@ -136,7 +136,7 @@ __global__ void mppi_rollout_kernel(
     const float* __restrict__ x0,         // (14,)
     const float* __restrict__ U_nominal,  // (H, 7)
     const float* __restrict__ noise,      // (K, H, 7)
-    const float* __restrict__ target_pos, // (3,)
+    const float* __restrict__ target_traj,// ((H+1) * 3,) flat per-step target
     const float* __restrict__ q_min,      // (7,)
     const float* __restrict__ q_max,      // (7,)
     const float* __restrict__ qdot_max,   // (7,)
@@ -162,7 +162,8 @@ __global__ void mppi_rollout_kernel(
 
     // Stage constants in registers. All threads read same indices →
     // broadcast in L1/L2 trivially, no shared-memory cooperation needed.
-    float tgt[3]   = { target_pos[0], target_pos[1], target_pos[2] };
+    // Note: the per-step target moved to `target_traj` (see signature) and is
+    // loaded inside the time loop, so we don't pre-stage it here.
     float qmin[N_JOINTS], qmax[N_JOINTS], qdmax[N_JOINTS];
     #pragma unroll
     for (int j = 0; j < N_JOINTS; j++) {
@@ -189,12 +190,15 @@ __global__ void mppi_rollout_kernel(
         }
 
         // Running cost components.
-        // (a) position via FK
+        // (a) position via FK, against the per-step target traj[t]
         float ee[3];
         forward_kinematics_pos(q, ee);
-        const float dx = ee[0] - tgt[0];
-        const float dy = ee[1] - tgt[1];
-        const float dz = ee[2] - tgt[2];
+        const float tx = target_traj[t * 3 + 0];
+        const float ty = target_traj[t * 3 + 1];
+        const float tz = target_traj[t * 3 + 2];
+        const float dx = ee[0] - tx;
+        const float dy = ee[1] - ty;
+        const float dz = ee[2] - tz;
         const float pos_err_sq = dx*dx + dy*dy + dz*dz;
 
         // (b) control magnitude, (c) joint velocity magnitude
@@ -232,12 +236,15 @@ __global__ void mppi_rollout_kernel(
 
     // Terminal cost: weighted position error at post-final state,
     // plus obstacle penalty so the planner doesn't "tunnel" to the goal
-    // in the last step.
+    // in the last step. Terminal target lives at target_traj[H].
     float ee[3];
     forward_kinematics_pos(q, ee);
-    const float dx = ee[0] - tgt[0];
-    const float dy = ee[1] - tgt[1];
-    const float dz = ee[2] - tgt[2];
+    const float tx = target_traj[H * 3 + 0];
+    const float ty = target_traj[H * 3 + 1];
+    const float tz = target_traj[H * 3 + 2];
+    const float dx = ee[0] - tx;
+    const float dy = ee[1] - ty;
+    const float dz = ee[2] - tz;
     cost += terminal_scale * w_pos * (dx*dx + dy*dy + dz*dz);
     cost += obstacle_cost(ee, obstacles, n_obs, w_obs, obs_margin, w_obs_flat);
 
@@ -250,11 +257,11 @@ torch::Tensor mppi_rollout(
     torch::Tensor x0,
     torch::Tensor U_nominal,
     torch::Tensor noise,
-    torch::Tensor target_pos,
+    torch::Tensor target_traj,       // (H+1, 3)
     torch::Tensor q_min,
     torch::Tensor q_max,
     torch::Tensor qdot_max,
-    torch::Tensor obstacles,        // (n_obs, 4) flat (x, y, z, r); shape (0, 4) when none
+    torch::Tensor obstacles,         // (n_obs, 4) flat (x, y, z, r); shape (0, 4) when none
     double u_min, double u_max,
     double dt,
     double w_pos, double w_u, double w_qdot, double w_lim,
@@ -264,18 +271,20 @@ torch::Tensor mppi_rollout(
     TORCH_CHECK(x0.is_cuda(),         "x0 must be CUDA");
     TORCH_CHECK(U_nominal.is_cuda(),  "U_nominal must be CUDA");
     TORCH_CHECK(noise.is_cuda(),      "noise must be CUDA");
-    TORCH_CHECK(target_pos.is_cuda(), "target_pos must be CUDA");
+    TORCH_CHECK(target_traj.is_cuda(),"target_traj must be CUDA");
     TORCH_CHECK(q_min.is_cuda() && q_max.is_cuda() && qdot_max.is_cuda(),
                 "joint limits must be CUDA");
     TORCH_CHECK(obstacles.is_cuda(),  "obstacles must be CUDA");
 
     TORCH_CHECK(x0.scalar_type() == torch::kFloat32, "x0 must be fp32");
     TORCH_CHECK(noise.scalar_type() == torch::kFloat32, "noise must be fp32");
+    TORCH_CHECK(target_traj.scalar_type() == torch::kFloat32, "target_traj must be fp32");
     TORCH_CHECK(obstacles.scalar_type() == torch::kFloat32, "obstacles must be fp32");
 
     TORCH_CHECK(x0.is_contiguous(),        "x0 must be contiguous");
     TORCH_CHECK(U_nominal.is_contiguous(), "U_nominal must be contiguous");
     TORCH_CHECK(noise.is_contiguous(),     "noise must be contiguous");
+    TORCH_CHECK(target_traj.is_contiguous(),"target_traj must be contiguous");
     TORCH_CHECK(obstacles.is_contiguous(), "obstacles must be contiguous");
 
     TORCH_CHECK(x0.dim() == 1 && x0.size(0) == 14,
@@ -286,7 +295,10 @@ torch::Tensor mppi_rollout(
                 && U_nominal.size(0) == noise.size(1),
                 "U_nominal must be shape (H, 7) and match noise's H, got ",
                 U_nominal.sizes(), " vs noise ", noise.sizes());
-    TORCH_CHECK(target_pos.numel() == 3, "target_pos must have 3 elements");
+    TORCH_CHECK(target_traj.dim() == 2 && target_traj.size(1) == 3
+                && target_traj.size(0) >= noise.size(1) + 1,
+                "target_traj must be shape (>=H+1, 3); got ", target_traj.sizes(),
+                " against H=", noise.size(1));
     TORCH_CHECK(q_min.numel() == 7 && q_max.numel() == 7 && qdot_max.numel() == 7,
                 "joint limits must each have 7 elements");
     TORCH_CHECK(obstacles.dim() == 2 && obstacles.size(1) == 4,
@@ -308,7 +320,7 @@ torch::Tensor mppi_rollout(
         x0.data_ptr<float>(),
         U_nominal.data_ptr<float>(),
         noise.data_ptr<float>(),
-        target_pos.data_ptr<float>(),
+        target_traj.data_ptr<float>(),
         q_min.data_ptr<float>(),
         q_max.data_ptr<float>(),
         qdot_max.data_ptr<float>(),

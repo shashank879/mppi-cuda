@@ -86,6 +86,26 @@ Two yellow spheres form a gate between home and target. The smooth quadratic pen
 
 The 8 mm penalty for the detour is a tax we pay; both clearances are strictly positive, so the smooth cost (not just the flat penalty) is providing meaningful avoidance pressure rather than penalising only after impact.
 
+### Trajectory tracking
+
+Circle
+
+<p align="center">
+  <img src="docs/traj_tracking_circle_cuda_kernel.png" alt="obstacle avoidance trajectory" width="900"/>
+</p>
+
+Figure 8
+
+<p align="center">
+  <img src="docs/traj_tracking_figure_eight_cuda_kernel.png" alt="obstacle avoidance trajectory" width="900"/>
+</p>
+
+Square Waypoints
+
+<p align="center">
+  <img src="docs/traj_tracking_square_cuda_kernel.png" alt="obstacle avoidance trajectory" width="900"/>
+</p>
+
 ## Design choices
 
 ### Why MPPI

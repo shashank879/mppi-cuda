@@ -17,3 +17,6 @@ dist/
 *.cubin
 *.fatbin
 *.ptx
+# IVL replay buffers (regenerate with scripts/collect_ivl_data.py)
+data/
+*.npz

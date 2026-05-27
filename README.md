@@ -166,14 +166,14 @@ mppi-cuda/
 
 ## Limitations
 
-- **The predictive model is a double integrator.** This is fine for reach + obstacle avoidance under PD position control, but it leaves accuracy on the table — the irreducible 39 mm residual is dominated by MPPI's intrinsic noise floor and cost-function trade-offs (see `docs/kernel_design.md` for the analysis). A learned MLP residual dynamics would close some of this; it's the natural next step.
+<!-- - **The predictive model is a double integrator.** This is fine for reach + obstacle avoidance under PD position control, but it leaves accuracy on the table — the irreducible 39 mm residual is dominated by MPPI's intrinsic noise floor and cost-function trade-offs (see `docs/kernel_design.md` for the analysis). A learned MLP residual dynamics would close some of this; it's the natural next step. -->
 - **EE-only collision.** The obstacle cost protects only the end-effector position, not the arm's intermediate links. Per-link collision would require running FK for each link inside the kernel (~6× the FK cost). Out of scope.
 - **One arm geometry.** The kernel hardcodes the Franka modified-DH parameters. Templating on dynamics type for swap-in arms / humanoid centroidal models is future work.
 - **No orientation tracking.** Position-only.
 
-## Roadmap
+<!-- ## Roadmap
 
-The next planned extension is **trajectory tracking** (time-varying targets like circles or figure-eights) with a learned policy as a comparison baseline against the kernel-MPPI. The current scope intentionally stops at single-target reach with obstacles — the contribution is the kernel itself and the engineering rigor around it.
+The next planned extension is **trajectory tracking** (time-varying targets like circles or figure-eights) with a learned policy as a comparison baseline against the kernel-MPPI. The current scope intentionally stops at single-target reach with obstacles — the contribution is the kernel itself and the engineering rigor around it. -->
 
 ## References
 

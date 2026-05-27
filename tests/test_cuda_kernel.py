@@ -70,21 +70,28 @@ def _setup(K=1024, H=40, device="cuda", seed=0, with_obstacles=False):
 
 
 def _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H):
-    """Reference rollout matching MPPIController.step() exactly."""
     x_batch = x.unsqueeze(0).expand(K, -1).contiguous()
     costs = torch.zeros(K, device=x.device, dtype=x.dtype)
     for t in range(H):
         u_t = U_perturbed[:, t]
-        costs = costs + cost.running_cost(x_batch, u_t)
+        costs = costs + cost.running_cost(x_batch, u_t, step=t)
         x_batch = dyn.step(x_batch, u_t)
-    costs = costs + cost.terminal_cost(x_batch)
+    costs = costs + cost.terminal_cost(x_batch, step=H)
     return costs
 
 
-def _call_kernel(x, U_nominal, noise, cost, dyn):
+def _call_kernel(x, U_nominal, noise, cost, dyn, H):
+    # Build (H+1, 3) target_traj. If the cost has a trajectory (length >= H+1)
+    # use it, else broadcast the static target_pos. Mirrors what
+    # CudaMPPIController does at runtime.
+    if cost.target_traj is not None and cost.target_traj.shape[0] >= H + 1:
+        target_traj = cost.target_traj[: H + 1].contiguous()
+    else:
+        target_traj = cost.target_pos.unsqueeze(0).expand(H + 1, 3).contiguous()
+
     return cuda_rollout(
         x, U_nominal, noise,
-        cost.target_pos, dyn.q_min, dyn.q_max, dyn.qdot_max,
+        target_traj, dyn.q_min, dyn.q_max, dyn.qdot_max,
         cost.obstacles,
         -20.0, 20.0,
         dyn.dt,
@@ -99,7 +106,7 @@ def test_kernel_matches_pytorch_costs_K1024_H40():
     dyn, cost, U_nominal, U_perturbed, noise, x = _setup(K=K, H=H)
 
     ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
-    out = _call_kernel(x, U_nominal, noise, cost, dyn)
+    out = _call_kernel(x, U_nominal, noise, cost, dyn, H)
     torch.cuda.synchronize()
 
     abs_err = (out - ref).abs()
@@ -130,7 +137,7 @@ def test_kernel_matches_pytorch_costs_with_nonzero_U_nominal():
     noise = (U_perturbed - U_nominal.unsqueeze(0)).contiguous()
 
     ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
-    out = _call_kernel(x, U_nominal, noise, cost, dyn)
+    out = _call_kernel(x, U_nominal, noise, cost, dyn, H)
     torch.cuda.synchronize()
 
     max_rel = ((out - ref).abs() / (ref.abs() + 1e-6)).max().item()
@@ -149,7 +156,7 @@ def test_kernel_matches_pytorch_costs_with_obstacles():
     dyn, cost, U_nominal, U_perturbed, noise, x = _setup(K=K, H=H, with_obstacles=True)
 
     ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
-    out = _call_kernel(x, U_nominal, noise, cost, dyn)
+    out = _call_kernel(x, U_nominal, noise, cost, dyn, H)
     torch.cuda.synchronize()
 
     abs_err = (out - ref).abs()
@@ -163,6 +170,50 @@ def test_kernel_matches_pytorch_costs_with_obstacles():
         f"obstacle-case costs differ too much: "
         f"max_rel={max_rel:.3e}, max_abs={max_abs:.3e}"
     )
+
+
+def test_kernel_matches_pytorch_costs_with_time_varying_target():
+    """Trajectory-tracking variant: target_traj has a different position per step.
+
+    Catches any bug where the kernel reads the same target slot for all timesteps
+    (which would still pass the static-target tests). The PyTorch baseline passes
+    `step=t` to running_cost and `step=H` to terminal_cost; the kernel reads
+    target_traj[t * 3 + ...] inside its time loop.
+    """
+    K, H = 4096, 20
+    dtype = torch.float32
+    dyn = DoubleIntegratorArm(dt=0.02, device="cuda", dtype=dtype)
+
+    # Per-step target: linear ramp in x. Catches a "stuck on step 0" bug.
+    traj = torch.zeros(H + 1, 3, device="cuda", dtype=dtype)
+    traj[:, 0] = torch.linspace(0.4, 0.6, H + 1, device="cuda", dtype=dtype)
+    traj[:, 2] = 0.5
+
+    cost = ReachingCost(
+        target_pos=traj,
+        w_pos=500.0, w_u=0.005, w_qdot=0.05, terminal_scale=20.0,
+        q_min=FRANKA_Q_MIN, q_max=FRANKA_Q_MAX,
+        device="cuda", dtype=dtype,
+    )
+
+    gen = torch.Generator(device="cuda").manual_seed(11)
+    noise_raw = torch.randn(K, H, 7, generator=gen, device="cuda", dtype=dtype) * 2.5
+    U_nominal = torch.zeros(H, 7, device="cuda", dtype=dtype)
+    U_perturbed = torch.clamp(U_nominal.unsqueeze(0) + noise_raw, -20.0, 20.0)
+    noise = (U_perturbed - U_nominal.unsqueeze(0)).contiguous()
+
+    q0 = torch.tensor(FRANKA_HOME_Q, device="cuda", dtype=dtype)
+    qdot0 = torch.zeros(7, device="cuda", dtype=dtype)
+    x = torch.cat([q0, qdot0])
+
+    ref = _pytorch_rollout_costs(dyn, cost, U_perturbed, x, K, H)
+    out = _call_kernel(x, U_nominal, noise, cost, dyn, H)
+    torch.cuda.synchronize()
+
+    max_rel = ((out - ref).abs() / (ref.abs() + 1e-6)).max().item()
+    max_abs = (out - ref).abs().max().item()
+    print(f"\n  (time-varying target)  max abs err: {max_abs:.3e}, max rel: {max_rel:.3e}")
+    assert max_rel < 1e-3, f"time-varying target: max_rel={max_rel:.3e}"
 
 
 def test_cuda_controller_step_matches_cpu_controller_step():

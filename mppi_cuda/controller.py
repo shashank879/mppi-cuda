@@ -16,9 +16,23 @@ the only things that flow through the time loop.
 """
 
 from __future__ import annotations
+import inspect
 from typing import Callable, Optional
 
 import torch
+
+
+def _accepts_step_kwarg(fn) -> bool:
+    """True if `fn` exposes a `step` parameter (incl. **kwargs catch-all)."""
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return False
+    if "step" in sig.parameters:
+        return True
+    return any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+    )
 
 
 class MPPIController:
@@ -41,6 +55,12 @@ class MPPIController:
         self.dynamics = dynamics
         self.running_cost = running_cost
         self.terminal_cost = terminal_cost
+        # Cache whether each cost callable accepts the `step` kwarg, so we
+        # stay back-compat with user lambdas that don't.
+        self._rc_takes_step = _accepts_step_kwarg(running_cost)
+        self._tc_takes_step = (
+            _accepts_step_kwarg(terminal_cost) if terminal_cost is not None else False
+        )
         self.m = action_dim
         self.H = horizon
         self.K = num_samples
@@ -99,10 +119,16 @@ class MPPIController:
         costs = torch.zeros(K, device=self.device, dtype=self.dtype)
         for t in range(H):
             u_t = U_perturbed[:, t]                       # (K, m)
-            costs = costs + self.running_cost(x_batch, u_t)
+            if self._rc_takes_step:
+                costs = costs + self.running_cost(x_batch, u_t, step=t)
+            else:
+                costs = costs + self.running_cost(x_batch, u_t)
             x_batch = self.dynamics(x_batch, u_t)
         if self.terminal_cost is not None:
-            costs = costs + self.terminal_cost(x_batch)
+            if self._tc_takes_step:
+                costs = costs + self.terminal_cost(x_batch, step=H)
+            else:
+                costs = costs + self.terminal_cost(x_batch)
 
         # 4. Importance weights via subtracted-min softmax for stability.
         beta = costs.min()

@@ -18,6 +18,7 @@ from .kinematics import (
     FRANKA_HOME_Q,
 )
 from .env import RobotEnv, MujocoFrankaEnv
+from . import trajectories
 
 # CudaMPPIController is gated on the compiled extension. Don't fail
 # import if it's missing (e.g. CPU-only install) — users on CPU should
@@ -38,6 +39,7 @@ __all__ = [
     "forward_kinematics",
     "RobotEnv",
     "MujocoFrankaEnv",
+    "trajectories",
     "FRANKA_DH",
     "FRANKA_FLANGE_D",
     "FRANKA_HOME_Q",

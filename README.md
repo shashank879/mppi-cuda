@@ -100,7 +100,7 @@ Figure 8
   <img src="docs/traj_tracking_figure_eight_cuda_kernel.png" alt="obstacle avoidance trajectory" width="900"/>
 </p>
 
-Square Waypoints
+Square
 
 <p align="center">
   <img src="docs/traj_tracking_square_cuda_kernel.png" alt="obstacle avoidance trajectory" width="900"/>

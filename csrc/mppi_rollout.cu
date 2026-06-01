@@ -142,6 +142,7 @@ __global__ void mppi_rollout_kernel(
     const float* __restrict__ qdot_max,   // (7,)
     const float* __restrict__ obstacles,  // (n_obs * 4,) flat (x,y,z,r); may be null when n_obs=0
     float* __restrict__ costs_out,        // (K,)
+    float* __restrict__ xT_out,           // (K, 14) final state (q, qdot)
     int K, int H, int n_obs,
     float u_min, float u_max,
     float dt,
@@ -249,19 +250,26 @@ __global__ void mppi_rollout_kernel(
     cost += obstacle_cost(ee, obstacles, n_obs, w_obs, obs_margin, w_obs_flat);
 
     costs_out[k] = cost;
+
+    // Final state x_T = (q, qdot) after H steps, same layout as x0.
+    #pragma unroll
+    for (int j = 0; j < N_JOINTS; j++) {
+        xT_out[k * 14 + j]            = q[j];
+        xT_out[k * 14 + N_JOINTS + j] = qdot[j];
+    }
 }
 
 // ------- Python binding -------
-
-torch::Tensor mppi_rollout(
+// Returns {costs (K,), final_pos (K, 3)} instead of just costs.
+std::tuple<torch::Tensor, torch::Tensor> mppi_rollout(
     torch::Tensor x0,
     torch::Tensor U_nominal,
     torch::Tensor noise,
-    torch::Tensor target_traj,       // (H+1, 3)
+    torch::Tensor target_traj,
     torch::Tensor q_min,
     torch::Tensor q_max,
     torch::Tensor qdot_max,
-    torch::Tensor obstacles,         // (n_obs, 4) flat (x, y, z, r); shape (0, 4) when none
+    torch::Tensor obstacles,
     double u_min, double u_max,
     double dt,
     double w_pos, double w_u, double w_qdot, double w_lim,
@@ -312,6 +320,7 @@ torch::Tensor mppi_rollout(
     auto stream = at::cuda::getCurrentCUDAStream();
 
     auto costs = torch::empty({K}, x0.options());
+    auto x_T   = torch::empty({K, 14}, x0.options());
 
     const int threads = 256;
     const int blocks  = (K + threads - 1) / threads;
@@ -326,6 +335,7 @@ torch::Tensor mppi_rollout(
         qdot_max.data_ptr<float>(),
         obstacles.data_ptr<float>(),
         costs.data_ptr<float>(),
+        x_T.data_ptr<float>(),
         K, H, n_obs,
         static_cast<float>(u_min), static_cast<float>(u_max),
         static_cast<float>(dt),
@@ -340,10 +350,10 @@ torch::Tensor mppi_rollout(
     );
     AT_CUDA_CHECK(cudaGetLastError());
 
-    return costs;
+    return {costs, x_T};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("mppi_rollout", &mppi_rollout,
-          "MPPI rollout (CUDA v0): per-rollout cost accumulation");
+          "MPPI rollout (CUDA v0): accumulated per-rollout cost + final EE position");
 }

@@ -71,6 +71,13 @@ PyTorch double-integrator predictive model, real-physics MuJoCo plant, 50 Hz con
   <img src="docs/cuda_mujoco_reach_demo.png" alt="MuJoCo closed-loop reach" width="900"/>
 </p>
 
+Using IVL-based goal-conditioned value function as the terminal cost (and no other cost) yields **~8mm final error**.
+
+<p align="center">
+  <img src="docs/cuda_value_mujoco_reach_demo.png" alt="MuJoCo closed-loop reach" width="900"/>
+</p>
+
+
 ### Obstacle avoidance
 
 Two yellow spheres form a gate between home and target. The smooth quadratic penalty pushes the EE trajectory clear of both spheres without sacrificing convergence quality.
@@ -146,13 +153,17 @@ mppi-cuda/
 │   ├── costs.py               # ReachingCost with obstacles
 │   ├── kinematics.py          # Modified-DH FK for Franka
 │   ├── env.py                 # RobotEnv ABC + MujocoFrankaEnv
+│   ├── ivl.py                 # IVL based value function
+│   ├── ivl_data.py            # Data generator for IVL training
+│   ├── trajectories.py        # Trajectory construction utility
 │   └── gravity.py             # mj_inverse/mj_solveM gravity utility
 ├── examples/
 │   ├── 01_arm_reach.py        # Self-consistent PyTorch demo
 │   ├── 02_mujoco_reach.py     # Closed loop in MuJoCo
 │   ├── 03_mujoco_reach_gif.py # Headless GIF render
 │   ├── 04_mujoco_reach_gravity.py  # Gravity-comp ablation
-│   └── 05_obstacle_reach.py   # Two-sphere obstacle gate
+│   ├── 05_obstacle_reach.py   # Two-sphere obstacle gate
+│   └── 06_traj_tracking.py    # Trajectory tracking demo
 ├── tests/                     # 19 PyTorch + 4 CUDA tests
 ├── benchmarks/
 │   ├── bench_latency.py       # Multi-backend harness, CSV output

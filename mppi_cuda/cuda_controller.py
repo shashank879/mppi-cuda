@@ -23,6 +23,7 @@ from .costs import ReachingCost
 
 
 class CudaMPPIController:
+
     def __init__(
         self,
         dynamics: DoubleIntegratorArm,
@@ -118,7 +119,7 @@ class CudaMPPIController:
         # clamping above, `noise = U_perturbed - U`, so `U + noise` clamps to
         # itself — round-trip identity. The kernel and host therefore agree
         # on the effective u_t at every step. Verified in the correctness test.
-        costs = self._kernel(
+        costs, final_state = self._kernel(
             x.contiguous(),
             self.U.contiguous(),
             noise,
@@ -126,13 +127,20 @@ class CudaMPPIController:
             self.dynamics.q_min,
             self.dynamics.q_max,
             self.dynamics.qdot_max,
-            self.cost.obstacles,                  # (n_obs, 4); (0, 4) if disabled
+            self.cost.obstacles,  # (n_obs, 4); (0, 4) if disabled
             self.u_min, self.u_max,
             self.dynamics.dt,
-            self.cost.w_pos, self.cost.w_u, self.cost.w_qdot, self.cost.w_lim,
-            self.cost.w_obs, self.cost.obs_margin, self.cost.w_obs_flat,
-            self.cost.terminal_scale,
+            self.cost.w_pos * (1. - self.cost.alpha),
+            self.cost.w_u * (1. - self.cost.alpha),
+            self.cost.w_qdot * (1. - self.cost.alpha),
+            self.cost.w_lim * (1. - self.cost.alpha),
+            self.cost.w_obs,
+            self.cost.obs_margin,
+            self.cost.w_obs_flat,
+            self.cost.terminal_scale * (1. - self.cost.alpha),
         )
+        if self.cost.alpha:
+            costs = costs + self.cost.value_cost(final_state, H)
 
         # 4. Importance weights.
         beta = costs.min()

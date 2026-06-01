@@ -138,7 +138,7 @@ def collect_episode(
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--n-episodes",        type=int,   default=500)
+    p.add_argument("--n-episodes",        type=int,   default=1000)
     p.add_argument("--ticks-per-episode", type=int,   default=300)
     p.add_argument("--horizon",           type=int,   default=10,
                    help="MPPI horizon. Matches what tracking demos use post-tuning.")

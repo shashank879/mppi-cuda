@@ -13,6 +13,7 @@ from __future__ import annotations
 import torch
 
 from .kinematics import forward_kinematics
+from .ivl import GCVNetwork, load_v_network
 
 
 class ReachingCost:
@@ -32,6 +33,8 @@ class ReachingCost:
         w_obs_flat: float = 0.0,  # weight on count of actual intersections; 0 disables
         q_min=None,
         q_max=None,
+        value_fn_pt=None,
+        alpha=0.99,
         device: str = "cpu",
         dtype: torch.dtype = torch.float32,
     ):
@@ -84,6 +87,13 @@ class ReachingCost:
         self.w_obs = float(w_obs)
         self.obs_margin = float(obs_margin)
         self.w_obs_flat = float(w_obs_flat)
+
+        if value_fn_pt:
+            self.value_net = load_v_network(value_fn_pt, device=device) if value_fn_pt else None
+        else:
+            assert alpha == 0., f"Non-zero alpha while value_fn_pt={value_fn_pt}"
+            self.value_net = None
+        self.alpha = alpha
 
     def set_target_traj(self, traj):
         """Replace the per-step target with a fresh (T, 3) buffer at runtime.
@@ -155,17 +165,26 @@ class ReachingCost:
             + self.w_u * (u ** 2).sum(-1)
             + self.w_qdot * (qdot ** 2).sum(-1)
             + self.w_lim * self._joint_limit_cost(q)
-            + self._obstacle_cost(q)
-        )
+        ) * (1. - self.alpha) + self._obstacle_cost(q)
+
+    def value_cost(self, x: torch.Tensor, step=None) -> torch.Tensor:
+        q = x[..., :7]
+        ee_target = self._target_at(step)
+        return - self.value_net.v_mean(
+            torch.cat([forward_kinematics(q)[0], x], -1),
+            ee_target.expand(*x.shape[:-1], ee_target.shape[-1])
+        ) * self.alpha
 
     def terminal_cost(self, x: torch.Tensor, step=None) -> torch.Tensor:
         q = x[..., :7]
         # Heavier reach cost at the end; also keep obstacles active so the
         # planner doesn't "tunnel" to the goal in the last step.
-        return (
+        cost = (
             self.terminal_scale * self.w_pos * self._ee_pos_err_sq(q, step=step)
-            + self._obstacle_cost(q)
-        )
+        ) * (1 - self.alpha) + self._obstacle_cost(q)
+        if self.value_net:
+            cost = cost + (self.alpha * self.value_cost(x, step))
+        return cost
 
     def __call__(self, x, u, step=None):
         return self.running_cost(x, u, step=step)

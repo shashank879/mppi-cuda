@@ -34,7 +34,7 @@ from mppi_cuda.ivl_data import IVLDataset
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data",       default="data/ivl_buffer.npz")
-    p.add_argument("--out",        default="data/ivl_value_drp_noiseP001_eeCat_noGeom.pt")
+    p.add_argument("--out",        default="data/ivl_value.pt")
     p.add_argument("--steps",      type=int,   default=50000)
     p.add_argument("--batch_size", type=int,   default=1024)
     p.add_argument("--lr",         type=float, default=3e-4)

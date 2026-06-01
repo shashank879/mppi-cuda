@@ -42,7 +42,7 @@ def accel_to_position_target(u_accel, q, qdot, dt, lookahead: int = 5):
     return q_target
 
 
-def run(device: str = "cpu", savepath=None):
+def run(device: str = "cpu", savepath=None, value_fn_pt=None):
     dtype = torch.float32
 
     # --- Environment (plant) ---
@@ -66,6 +66,8 @@ def run(device: str = "cpu", savepath=None):
         q_max=FRANKA_Q_MAX,
         device=device,
         dtype=dtype,
+        value_fn_pt=value_fn_pt,
+        alpha=args.value_alpha,
     )
 
     # --- Controller (retuned for MuJoCo) ---
@@ -163,14 +165,17 @@ def run(device: str = "cpu", savepath=None):
     print(f"Final  EE:            {ee_log[-1]}")
     print(f"Final  position err:  {err_final * 1000:.2f} mm")
 
+    has_value_plot = cost.value_net and cost.alpha
+
     if savepath:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        fig = plt.figure(figsize=(13, 4.5))
+        fig = plt.figure(figsize=(16, 4) if has_value_plot else (13, 4.5))
+        subplot_st_idx = 140 if has_value_plot else 130
 
-        ax1 = fig.add_subplot(131, projection="3d")
+        ax1 = fig.add_subplot(subplot_st_idx + 1, projection="3d")
         ax1.plot(ee_log[:, 0], ee_log[:, 1], ee_log[:, 2], lw=2)
         ax1.scatter(*ee_log[0], color="green", s=80, label="start")
         ax1.scatter(*target_pos.cpu().numpy(), color="red", s=80, label="target")
@@ -179,7 +184,7 @@ def run(device: str = "cpu", savepath=None):
         ax1.set_title("EE trajectory (MuJoCo)")
         ax1.legend(fontsize=8)
 
-        ax2 = fig.add_subplot(132)
+        ax2 = fig.add_subplot(subplot_st_idx + 2)
         t_axis = np.arange(len(ee_log)) * env.control_dt
         err_traj = np.linalg.norm(ee_log - target_pos.cpu().numpy(), axis=1) * 1000
         ax2.plot(t_axis, err_traj)
@@ -188,7 +193,7 @@ def run(device: str = "cpu", savepath=None):
         ax2.set_title("Convergence (MuJoCo closed loop)")
         ax2.grid(True, alpha=0.3)
 
-        ax3 = fig.add_subplot(133)
+        ax3 = fig.add_subplot(subplot_st_idx + 3)
         for j in range(7):
             ax3.plot(t_axis[1:], cmd_log[:, j], label=f"j{j+1}", lw=0.8)
         ax3.set_xlabel("sim time (s)")
@@ -197,8 +202,20 @@ def run(device: str = "cpu", savepath=None):
         ax3.legend(fontsize=7, ncol=2, loc="upper right")
         ax3.grid(True, alpha=0.3)
 
+        # Subplot 4: NEW - Value Function vs Time (Bottom Right)
+        if has_value_plot:
+            vals = cost.value_net.v_mean(
+                torch.from_numpy(np.concatenate([ee_log, state_log], -1)).to(device=device, dtype=dtype),
+                target_pos.expand((*state_log.shape[:-1], target_pos.shape[-1]))).cpu().detach().numpy()
+            ax4 = fig.add_subplot(subplot_st_idx + 4)
+            ax4.plot(t_axis, vals, color="tab:purple", lw=1.5)
+            ax4.set_xlabel("sim time (s)")
+            ax4.set_ylabel("Value Estimate V(s)")
+            ax4.set_title("Value Function over Time")
+            ax4.grid(True, alpha=0.3)
+
         plt.tight_layout()
-        out = os.path.join(savepath, f"{args.controller}_mujoco_reach_demo.png")
+        out = os.path.join(savepath, f"{args.controller}{'_value' if (value_fn_pt and args.value_alpha) else ''}_mujoco_reach_demo.png")
         os.makedirs(savepath, exist_ok=True)
         plt.savefig(out, dpi=120)
         print(f"Saved plot: {out}")
@@ -214,5 +231,7 @@ if __name__ == "__main__":
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--controller", default="cuda", choices=["torch", "cuda"])
     p.add_argument("--savepath", default="docs")
+    p.add_argument("--value_fn_pt", default="data/ivl_value.pt")
+    p.add_argument("--value_alpha", default=0.0)
     args = p.parse_args()
-    run(device=args.device, savepath=args.savepath)
+    run(device=args.device, savepath=args.savepath, value_fn_pt=args.value_fn_pt)

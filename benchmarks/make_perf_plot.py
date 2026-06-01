@@ -13,17 +13,6 @@ import numpy as np
 import pandas as pd
 
 
-# Numbers from benchmarks/results/ — committed CPU baseline + the v0 GPU run.
-# DATA = {
-#     "pytorch_cpu":  {(256,  40): 104.68, (1024, 40): 174.45, (4096, 40): 411.41},
-#     "pytorch_cuda": {(1024, 40):  87.49, (1024, 80): 174.60,
-#                      (4096, 40):  85.83, (4096, 80): 169.40,
-#                      (16384, 40): 86.03, (16384, 80): 170.16},
-#     "cuda_kernel":  {(1024, 40):   0.30, (1024, 80):   0.31,
-#                      (4096, 40):   0.31, (4096, 80):   0.30,
-#                      (16384, 40):  0.39, (16384, 80):  0.73},
-# }
-
 data = pd.read_csv('./benchmarks/results/latency_20260525_215419.csv')
 
 DATA = {}
